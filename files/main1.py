@@ -1,4 +1,6 @@
 import copy
+import json
+import os
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -215,7 +217,12 @@ def evaluate_experiment(df, exp):
     sgkf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=SEED)
     fold_metrics = []
 
+    experiment_key = exp["key"]
+    save_dir = os.path.join("files", "saved_models", experiment_key)
+    os.makedirs(save_dir, exist_ok=True)
+
     print(f"\n=== {exp['name']} ===")
+    print(f"Saving fold artifacts to: {save_dir}")
     for fold, (train_idx, test_idx) in enumerate(sgkf.split(X, y, groups), start=1):
         X_tr_full = X[train_idx]
         y_tr_full = y[train_idx]
@@ -257,6 +264,18 @@ def evaluate_experiment(df, exp):
         acc = accuracy_score(y_true, y_pred)
         fold_metrics.append((auc, f1, rec, acc))
 
+        artifact = {
+            "model_state_dict": model.state_dict(),
+            "model_type": exp["model_type"],
+            "input_dim": X.shape[1],
+            "feature_names": features,
+            "threshold": threshold,
+            "scaler_mean": scaler.mean_.tolist(),
+            "scaler_scale": scaler.scale_.tolist(),
+            "fold_metrics": {"auc": float(auc), "f1": float(f1), "recall": float(rec), "acc": float(acc)},
+        }
+        torch.save(artifact, os.path.join(save_dir, f"fold_{fold}.pt"))
+
         print(
             f"Fold {fold}: AUC={auc:.4f}, F1={f1:.4f}, "
             f"Recall={rec:.4f}, Acc={acc:.4f}, Th={threshold:.2f}"
@@ -276,7 +295,42 @@ def evaluate_experiment(df, exp):
         f"F1={result['f1_mean']:.4f}, Recall={result['recall_mean']:.4f}, "
         f"Acc={result['acc_mean']:.4f}"
     )
+    with open(os.path.join(save_dir, "summary.json"), "w") as f:
+        json.dump(result, f, indent=2)
     return result
+
+
+def get_baseline_config():
+    return {
+        "key": "baseline_mlp_bce",
+        "name": "A0: Baseline MLP + Weighted BCE",
+        "model_type": "mlp",
+        "loss_type": "bce",
+        "use_scheduler": False,
+        "tune_threshold": False,
+    }
+
+
+def get_residual_focal_config():
+    return {
+        "key": "residual_mlp_focal",
+        "name": "A1: Residual MLP + Focal Loss",
+        "model_type": "residual",
+        "loss_type": "focal",
+        "use_scheduler": False,
+        "tune_threshold": False,
+    }
+
+
+def get_residual_hybrid_config():
+    return {
+        "key": "residual_mlp_hybrid",
+        "name": "A2: Residual MLP + Hybrid Loss + Scheduler + Threshold Tuning",
+        "model_type": "residual",
+        "loss_type": "hybrid",
+        "use_scheduler": True,
+        "tune_threshold": True,
+    }
 
 
 if __name__ == "__main__":
@@ -286,36 +340,30 @@ if __name__ == "__main__":
     print(f"Class distribution: {dict(df['status'].value_counts())}")
     print(f"Device: {DEVICE}")
 
-    experiments = [
-        {
-            "name": "A0: Baseline MLP + Weighted BCE",
-            "model_type": "mlp",
-            "loss_type": "bce",
-            "use_scheduler": False,
-            "tune_threshold": False,
-        },
-        {
-            "name": "A1: Residual MLP + Focal Loss",
-            "model_type": "residual",
-            "loss_type": "focal",
-            "use_scheduler": False,
-            "tune_threshold": False,
-        },
-        {
-            "name": "A2: Residual MLP + Hybrid Loss + Scheduler + Threshold Tuning",
-            "model_type": "residual",
-            "loss_type": "hybrid",
-            "use_scheduler": True,
-            "tune_threshold": True,
-        },
-    ]
+    baseline_result = evaluate_experiment(df, get_baseline_config())
+    print(
+        f"\nDone: {baseline_result['name']} -> AUC={baseline_result['auc_mean']:.4f}, "
+        f"F1={baseline_result['f1_mean']:.4f}, Recall={baseline_result['recall_mean']:.4f}, "
+        f"Acc={baseline_result['acc_mean']:.4f}"
+    )
 
-    all_results = []
-    for exp in experiments:
-        all_results.append(evaluate_experiment(df, exp))
+    residual_focal_result = evaluate_experiment(df, get_residual_focal_config())
+    print(
+        f"\nDone: {residual_focal_result['name']} -> AUC={residual_focal_result['auc_mean']:.4f}, "
+        f"F1={residual_focal_result['f1_mean']:.4f}, Recall={residual_focal_result['recall_mean']:.4f}, "
+        f"Acc={residual_focal_result['acc_mean']:.4f}"
+    )
 
-    print("\n=== Ablation Ranking by Mean AUC ===")
+    residual_hybrid_result = evaluate_experiment(df, get_residual_hybrid_config())
+    print(
+        f"\nDone: {residual_hybrid_result['name']} -> AUC={residual_hybrid_result['auc_mean']:.4f}, "
+        f"F1={residual_hybrid_result['f1_mean']:.4f}, Recall={residual_hybrid_result['recall_mean']:.4f}, "
+        f"Acc={residual_hybrid_result['acc_mean']:.4f}"
+    )
+
+    all_results = [baseline_result, residual_focal_result, residual_hybrid_result]
     ranked = sorted(all_results, key=lambda x: x["auc_mean"], reverse=True)
+    print("\n=== Final Ranking by Mean AUC ===")
     for i, r in enumerate(ranked, start=1):
         print(
             f"{i}. {r['name']} -> AUC={r['auc_mean']:.4f}, F1={r['f1_mean']:.4f}, "
