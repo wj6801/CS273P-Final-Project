@@ -48,7 +48,7 @@
 We implement a custom multi-layer perceptron (MLP) in PyTorch for detecting
 Parkinson's disease from 22 voice biomarker features. We employ Focal Loss to
 handle the 75:25 class imbalance and enforce subject-level cross-validation to
-prevent data leakage. Systematic ablation studiesover loss functions, architecture 
+prevent data leakage. Systematic ablation studies over loss functions, architecture 
 depth/width, and dropout rates reveal that:
 (1) Focal Loss and standard BCE perform comparably on F1, but differ on MCC;
 (2) shallower architectures match or outperform deeper ones on this small
